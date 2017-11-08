@@ -3,7 +3,7 @@ import Foundation
 /**
  - seealso: https://tools.ietf.org/html/draft-pantos-http-live-streaming-19
  */
-struct M3U {
+public struct M3U {
     static let header:String = "#EXTM3U"
     static let defaultVersion:Int = 3
 
@@ -15,7 +15,7 @@ struct M3U {
 
 extension M3U: CustomStringConvertible {
     // MARK: CustomStringConvertible
-    var description:String {
+    public var description:String {
         var lines:[String] = [
             "#EXTM3U",
             "#EXT-X-VERSION:\(version)",
@@ -31,7 +31,7 @@ extension M3U: CustomStringConvertible {
 }
 
 // MARK: -
-struct M3UMediaInfo {
+public struct M3UMediaInfo {
     var url:URL
     var duration:Double
 }

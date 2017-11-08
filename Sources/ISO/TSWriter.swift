@@ -1,30 +1,25 @@
 import CoreMedia
 import Foundation
 
-class TSWriter {
+public protocol TSWriterDelegate: class {
+    func didWriteChunk(_ url: URL, duration: TimeInterval)
+}
+public class TSWriter {
+    public weak var delegate: TSWriterDelegate?
     static let defaultPATPID:UInt16 = 0
     static let defaultPMTPID:UInt16 = 4095
     static let defaultVideoPID:UInt16 = 256
     static let defaultAudioPID:UInt16 = 257
-    static let defaultSegmentCount:Int = 3
-    static let defaultSegmentMaxCount:Int = 12
-    static let defaultSegmentDuration:Double = 2
+    static let defaultSegmentDuration:Double = 0.5
 
-    var playlist:String {
+    public var playlist:String {
         var m3u8:M3U = M3U()
         m3u8.targetDuration = segmentDuration
-        if (sequence <= TSWriter.defaultSegmentMaxCount) {
-            m3u8.mediaSequence = 0
-            m3u8.mediaList = files
-            return m3u8.description
-        }
-        let startIndex = max(0, files.count - TSWriter.defaultSegmentCount)
-        m3u8.mediaSequence = sequence - TSWriter.defaultSegmentMaxCount
-        m3u8.mediaList = Array(files[startIndex..<files.count])
+        m3u8.mediaSequence = 0
+        m3u8.mediaList = files
         return m3u8.description
     }
     var lockQueue:DispatchQueue = DispatchQueue(label: "com.haishinkit.HaishinKit.TSWriter.lock")
-    var segmentMaxCount:Int = TSWriter.defaultSegmentMaxCount
     var segmentDuration:Double = TSWriter.defaultSegmentDuration
 
     private(set) var PAT:ProgramAssociationSpecific = {
@@ -33,7 +28,7 @@ class TSWriter {
         return PAT
     }()
     private(set) var PMT:ProgramMapSpecific = ProgramMapSpecific()
-    private(set) var files:[M3UMediaInfo] = []
+    public private(set) var files:[M3UMediaInfo] = []
     private(set) var running:Bool = false
     private var PCRPID:UInt16 = TSWriter.defaultVideoPID
     private var sequence:Int = 0
@@ -45,6 +40,7 @@ class TSWriter {
     private var rotatedTimestamp:CMTime = kCMTimeZero
     private var currentFileHandle:FileHandle?
     private var continuityCounters:[UInt16:UInt8] = [:]
+    private var lastDecodeTimeStamp: CMTime = kCMTimeZero
 
     func getFilePath(_ fileName:String) -> String? {
         for info in files {
@@ -78,6 +74,8 @@ class TSWriter {
             decodeTimeStamp = presentationTimeStamp
         }
 
+        print("WRITE \(CMTimeGetSeconds(decodeTimeStamp)) \(streamID == 192 ? "audio" : "video")")
+
         var packets:[TSPacket] = split(PID, PES: PES, timestamp: decodeTimeStamp)
         let _:Bool = rotateFileHandle(decodeTimeStamp)
 
@@ -100,6 +98,7 @@ class TSWriter {
             self.currentFileHandle?.write(bytes)
             logger.warn("\(exception)")
         }
+        lastDecodeTimeStamp = decodeTimeStamp
     }
 
     func split(_ PID:UInt16, PES:PacketizedElementaryStream, timestamp:CMTime) -> [TSPacket] {
@@ -116,11 +115,21 @@ class TSWriter {
         return packets
     }
 
+    public func saveLastChunk() {
+        _rotateFileHandle(lastDecodeTimeStamp)
+    }
+
     func rotateFileHandle(_ timestamp:CMTime) -> Bool {
         let duration:Double = timestamp.seconds - rotatedTimestamp.seconds
         if (duration <= segmentDuration) {
             return false
         }
+        _rotateFileHandle(timestamp)
+        return true
+    }
+
+    func _rotateFileHandle(_ timestamp:CMTime) {
+        let duration:Double = timestamp.seconds - rotatedTimestamp.seconds
 
         let fileManager:FileManager = FileManager.default
 
@@ -146,22 +155,20 @@ class TSWriter {
             files.append(M3UMediaInfo(url: currentFileURL, duration: duration))
             sequence += 1
         }
+
+        nstry({
+          self.currentFileHandle?.synchronizeFile()
+          if let url = self.currentFileURL {
+            self.delegate?.didWriteChunk(url, duration: duration)
+          }
+        }) { exeption in
+          logger.warn("\(exeption)")
+        }
     
         fileManager.createFile(atPath: url.path, contents: nil, attributes: nil)
-        if (TSWriter.defaultSegmentMaxCount <= files.count) {
-            let info:M3UMediaInfo = files.removeFirst()
-            do { try fileManager.removeItem(at: info.url as URL) }
-            catch let e as NSError { logger.warn("\(e)") }
-        }
         currentFileURL = url
         for (pid, _) in continuityCounters {
             continuityCounters[pid] = 0
-        }
-        
-        nstry({
-            self.currentFileHandle?.synchronizeFile()
-        }) { exeption in
-            logger.warn("\(exeption)")
         }
         
         currentFileHandle?.closeFile()
@@ -182,8 +189,6 @@ class TSWriter {
             logger.warn("\(exception)")
         }
         rotatedTimestamp = timestamp
-
-        return true
     }
 
     func removeFiles() {
