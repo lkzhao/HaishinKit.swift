@@ -10,7 +10,7 @@ public class TSWriter {
     static let defaultPMTPID:UInt16 = 4095
     static let defaultVideoPID:UInt16 = 256
     static let defaultAudioPID:UInt16 = 257
-    static let defaultSegmentDuration:Double = 0.5
+    static let defaultSegmentDuration:Double = 2.0
 
     public var playlist:String {
         var m3u8:M3U = M3U()
@@ -148,7 +148,7 @@ public class TSWriter {
             }
         }
 
-        let filename:String = Int(timestamp.seconds).description + ".ts"
+        let filename:String = "\(Int(timestamp.seconds))_\(files.count).ts"
         let url:URL = URL(fileURLWithPath: temp + filename)
 
         if let currentFileURL:URL = currentFileURL {
